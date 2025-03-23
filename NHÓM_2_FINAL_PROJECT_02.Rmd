@@ -1,0 +1,2902 @@
+---
+title: "NHOM_2_FINAL_PROJECT_02"
+author: "NHOM 2"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Library
+```{r, warning=FALSE, message = FALSE}
+library(janitor)
+library(tidyverse)
+library(corrplot)
+library(ggplot2)
+library(nnet)
+library(MASS)
+library(pROC)
+library(themis)
+library(dplyr)
+library(lmPerm)
+library(VIM)
+library(klaR)
+library(caret)
+library(ggord) 
+library(purrr)
+# # Enable the r-universe repo
+# options(repos = c(
+#     fawda123 = 'https://fawda123.r-universe.dev',
+#     CRAN = 'https://cloud.r-project.org'))
+# 
+# # Install ggord
+# install.packages('ggord')
+library(boot)
+library(knitr)
+library(epitools)
+```
+
+# 1. Import Data
+Hiện nay, bệnh tiểu đường là một căn bệnh mãn tính phổ biến nhất trên thế giới. Bệnh tiểu đường là một căn bệnh mãn tính nghiêm trọng khiến mọi người mất khả năng điều chỉnh hiệu quả lượng glucose trong máu và có thể dẫn đến giảm chất lượng cuộc sống và tuổi thọ. Các biến chứng như bệnh tim, mất thị lực, cắt cụt chi dưới và bệnh thận có liên quan đến lượng đường cao mãn tính vẫn còn trong máu đối với những người mắc bệnh tiểu đường. Mặc dù không có cách chữa khỏi bệnh tiểu đường, nhưng các chiến lược như giảm cân, ăn uống lành mạnh, vận động và điều trị y tế có thể làm giảm tác hại của căn bệnh này ở nhiều bệnh nhân. Chẩn đoán sớm có thể dẫn đến thay đổi lối sống và điều trị hiệu quả hơn, khiến các mô hình dự đoán nguy cơ mắc bệnh tiểu đường trở thành công cụ quan trọng đối với cộng đồng và các quan chức y tế công cộng.
+
+Dữ liệu `diabetes_012_health_indicators_BRFSS2015.csv` chứa thông tin khảo sát của 253,680 người dân Hoa Kỳ (năm 2015), với 22 biến được quan sát:
+
+## 1.1 Đọc dữ liệu
+```{r, warning=FALSE, message = FALSE}
+diabetes <- read_csv("datasets/diabetes_012_health_indicators_BRFSS2015.csv") |>
+  clean_names()
+```
+
+## 1.2 Xử lí dữ liệu khuyết và trùng lặp
+
+```{r}
+# Dữ liệu khuyết
+aggr(diabetes, ylab = c("Proportion of missings", "Pattern"), number = TRUE,
+ cex.axis = 0.6, cex.numbers = 0.5)
+```
+
+**Nhận xét:** Không có dữ liệu khuyết.
+
+```{r}
+# Dữ liệu trùng lặp
+diabetes <- diabetes |> distinct()
+diabetes |> glimpse()
+```
+
+**Nhận xét:** Dữ liệu gồm 22 biến, trong đó có 19 biến định tính và 3 biến định lượng là `bmi`, `ment_hlth` và `phys_hlth`.
+
+## 1.3 Số nhóm trong biến phản hồi `diabetes_012`
+```{r}
+table(diabetes$diabetes_012)
+```
+
+# 2. Data Visualization
+
+Ta trực quan các biến định lượng có trong dữ liệu.
+
+```{r}
+boxplot(diabetes$bmi, diabetes$ment_hlth, diabetes$phys_hlth)
+```
+
+**Nhận xét:** Mặc dù là biến định lượng nhưng `bmi`, `ment_hlth` và `phys_hlth` có khoảng phân bố trong giới hạn nhất định. 
+
+- `bmi`
+```{r}
+summary(diabetes$bmi)
+```
+
+- `ment_hlth`
+```{r}
+summary(diabetes$ment_hlth)
+```
+
+- `phys_hlth`
+```{r}
+summary(diabetes$phys_hlth)
+```
+
+- `ment_hlth` và `phys_hlth` biểu thị cho số lượng ngày, nên việc có các số phân bố ngoài boxplot ta không có gì để nhận xét.
+
+- `bmi` là chỉ số khối của cơ thể được tính thông qua cân nặng và chiều cao của riêng một cá nhân. Phân loại Chỉ số BMI (theo WHO) như sau:
+
+| **BMI**          | **Phân loại**                    |
+|------------------|----------------------------------|
+| < 18.5           | Thiếu cân                        |
+| 18.5 – 24.9      | Bình thường                      |
+| 25.0 – 29.9      | Thừa cân                         |
+| 30.0 – 34.9      | Béo phì độ 1                     |
+| 35.0 – 39.9      | Béo phì độ 2                     |
+| ≥ 40.0           | Béo phì độ 3 (Béo phì bệnh lý)   |
+
+- Số lượng bệnh nhân có `bmi` vượt ngưỡng 40 là:
+```{r}
+length(diabetes$bmi[diabetes$bmi > 40])
+length(diabetes$bmi[diabetes$bmi > 40])/ nrow(diabetes)
+```
+
+- Con số 11471 chiếm gần 5\% dữ liệu. Vậy những dữ liệu này có thật sự thất thường hay không, vì theo tìm hiểu của thành viên trong nhóm, con số khoảng dưới gần 70 có thể xuất hiện với một tỷ lệ thấp, nhưng trên 70 thật sự rất hiếm hoi, tuy nhiên không phải là không có, ta thử xem nó phân bố ở các độ tuổi ra sao:
+
+```{r}
+ggplot(diabetes, aes(x = factor(age), y = bmi)) +  
+  geom_boxplot(fill = "skyblue", color = "darkblue", outlier.color = "red") + 
+  labs(
+    title = "Boxplot BMI theo từng mức độ tuổi",
+    x = "Nhóm độ tuổi",
+    y = "BMI"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+- Sự phân bố các giá trị `bmi` khá đồng đều trên các độ tuổi từ 18 trở lên, có một số điểm đang nằm dưới mức bình thường, tuy nhiên điều đó không quá quan trọng, Hơn nữa, đối với các bệnh nhân bị tiểu đường, những trường hợp béo phì chiếm một tỷ lệ không nhỏ trong đó, với một dữ liệu được thu thập cho mục đích nghiên cứu thì những con số này có thể xuất hiện được chứ không phải bất ngờ.
+
+- Tất nhiên, việc có `bmi` quá cao, một cách rất hiếm thấy, có ảnh hưởng đến việc xây dựng các mô hình (nếu có) hay không, thì ta cần phải kiểm tra thêm ở phần đó.
+
+# 3. A/B testing
+## 3.1 A/B testing & Kiểm định phi tham số
+
+### 3.1.1.Tiến hành dùng phương pháp kiểm định Chi bình phương để đánh giá độ ảnh hưởng của tát cả các biến độc lập lên biến mục tiêu
+
+
+```{r}
+diabetes_data<- diabetes
+```
+
+```{r}
+ 
+calculate_feature_scores <- function(data, target_var, features) {
+  # Chuyển đổi các cột thành factor
+  data <- data |>
+    mutate(across(all_of(c(features, target_var)), as.factor))
+  # Tính toán điểm số
+  scores <- sapply(features, function(feature) {
+    suppressWarnings({
+      chisq.test(table(data[[feature]], data[[target_var]]))$statistic
+    })
+  })
+  # Tạo bảng kết quả
+  f_Scores <- data.frame(
+    Feature = features,
+    Score = scores
+  )
+  # Sắp xếp theo điểm số giảm dần
+  f_Scores_sorted <- f_Scores[order(-f_Scores$Score), ]
+  return(f_Scores_sorted)
+}
+```
+```{r}
+target_var <- "diabetes_012"
+features <- setdiff(colnames(diabetes_data), target_var)
+result <- calculate_feature_scores(diabetes_data, target_var, features)
+
+print(result)
+```
+Nhận xét : Biến có "Score" càng lớn thì khả năng ảnh hưởng của biến đến biến mục tiêu càng mạnh. Song kiểm định này chỉ tương đối chính xác đối với các biến định tính nên ta sẽ dùng nhiều kiểm định khác đối với từng nhóm biến khác nhau.
+
+### 3.1.2.Phân loại biến
+
+- Nhằm xác định những nhóm biến dựa trên kiểu dữ liệu mà biến đó thể hiện như nhóm biến nhị phân xác định trạng thái (0,1), nhóm biến phân bậc, và nhóm biến định lượng.
+
+```{r}
+categorize_variables <- function(data) {
+  # Xác định các biến trạng thái
+  yes_no_vars <- sapply(data, function(x) is.numeric(x) && length(unique(x)) == 2)
+  
+  non_yes_no_vars <- !yes_no_vars
+  
+  num_unique_values <- sapply(data, function(x) length(unique(x)))
+  
+  # Xác định các biến phân nhóm
+  categorical_vars <- names(data)[non_yes_no_vars & num_unique_values > 2 & num_unique_values <= 13]
+  
+  # Xác định các biến liên tục
+  continuous_vars <- names(data)[non_yes_no_vars & !(names(data) %in% categorical_vars)]
+  
+  list(
+    yes_no = names(data)[yes_no_vars],
+    categorical = categorical_vars,
+    continuous = continuous_vars
+  )
+}
+```
+
+```{r}
+diabetes_no_target<-diabetes_data|> dplyr::select(-diabetes_012)
+result <- categorize_variables(diabetes_no_target)
+
+cat("Bien nhi phan:\n")
+trang_thai<-(result$yes_no)
+trang_thai
+cat("\nBien phan bac:\n")
+phan_nhom<-result$categorical
+phan_nhom
+cat("\nBien dinh luong:\n")
+lien_tuc<-result$continuous
+lien_tuc
+```
+### 3.1.3.Kiểm định bằng các phương pháp khác nhau cho từng nhóm biến
+
+#### a) Đối với nhóm biến nhị phân, ta có bảng thống kê và kiểm định mục với biến mục tiêu như sau:
+
+```{r}
+bangthongkedinhtinh <- function(data, target_var, name_of_var,
+                                cot_hay_hang, percent = FALSE) {
+  purrr::walk(name_of_var, function(var) {
+    cat("\nBien nhi phan dang so sanh voi bien muc tieu :", var, "\n")
+    table_result <- data |>
+      tabyl(.data[[target_var]], .data[[var]])
+    if (percent) {
+      table_result <- table_result |> adorn_percentages(cot_hay_hang)
+    } else {
+      table_result <- table_result |> adorn_totals(cot_hay_hang)
+    }
+    print(table_result)
+  })
+}
+```
+##### Bảng thống kê cho nhóm biến mang dữ liệu nhị phân
+Để dễ nhìn ta sẽ chuyển sang dạng phần trăm dữ liệu cho từng nhóm biến không bị bệnh, tiền tiểu đường và tiểu đường.
+
+```{r}
+bangthongkedinhtinh(diabetes_data,"diabetes_012",trang_thai,'row',TRUE)
+```
+
+
+##### Sử dụng kiểm định OR để xét tỉ lệ xảy ra bệnh theo từng nhóm một như không bị bệnh với tiền tiểu đường, tiểu đường với không tiểu đường và tiền tiểu đường với tiểu đường?
+
+```{r}
+analyze_pairwise_effect <- function(data, target_var, group_vars) {
+  target_levels <- sort(unique(data[[target_var]]))
+  
+  level_pairs <- combn(target_levels, 2, simplify = FALSE)
+  
+  results <- purrr::map_dfr(group_vars, function(group_var) {
+    purrr::map_dfr(level_pairs, function(pair) {
+      filtered_data <- data[data[[target_var]] %in% pair, ]
+      binary_target <- factor(filtered_data[[target_var]], levels = pair)
+      freq_table <- table(binary_target, filtered_data[[group_var]])
+      orr <- epitools::oddsratio(freq_table)
+      tibble(
+        group_var = group_var,
+        comparison = paste(pair[1], "vs", pair[2]),
+        method = "Odds Ratio",
+        value = orr$measure[2, 1],
+        conf_low = orr$measure[2, 2],
+        conf_high = orr$measure[2, 3]
+      )
+    })
+  })
+  return(results)
+}
+```
+
+Ta thu được kết quả :
+
+```{r}
+analyze_pairwise_effect(diabetes_data, "diabetes_012",trang_thai)
+```
+
+Nhận xét :
+- Biến có ảnh hưởng tiêu cực (Odds Ratio > 1, CI > 1):
+high_bp,high_chol,chol_check,smoker,stroke,heart_diseaseor_attack,diff_walk,any_healthcare,no_docbc_cost.
+- Biến có ảnh hưởng tích cực (Odds Ratio < 1, CI < 1):
+veggies,hvy_alcohol_consump,phys_activity,fruits
+Biến không có ý nghĩa (CI chứa 1): sex
+#### b) Đối với nhóm biến phân bậc
+##### Ta xét bảng thống kê giữa các nhóm biến phân bậc với biến mục tiêu như sau:
+
+```{r}
+summarize_group <- function(data, target_var, group_vars) {
+  purrr::walk(group_vars, function(group_var) {
+    summary_table <- data |> 
+      group_by(.data[[group_var]]) |> 
+      summarise(
+        n = n(),
+        tb = mean(.data[[target_var]], na.rm = TRUE),
+      )
+    cat("\nTóm tắt cho nhóm:", group_var, "\n")
+    print(summary_table)
+  })
+}
+
+```
+
+```{r}
+summarize_group(diabetes_data,'diabetes_012',phan_nhom)
+```
+
+##### Tiến hành xây dựng hàm anova để kiểm định liệu có sự khác nhau giữa dữ liệu trong các biến nằm trong nhóm biến phân nhóm?
+
+```{r}
+calc_stats <- function(response, group) {
+  k <- length(unique(group))
+  n <- table(group)
+  n_sample <- sum(n)
+  sample_mean <- mean(response)
+  
+  SSW <- sum(sapply(split(response, group), function(x) var(x) * (length(x) - 1)))
+  SSB <- sum(n * (tapply(response, group, mean) - sample_mean)^2)
+  MSW <- SSW / (n_sample - k)
+  MSB <- SSB / (k - 1)
+  F_sample <- MSB / MSW
+  
+  return(F_sample)
+}
+```
+
+```{r}
+perm_aov <- function(response, group, R){
+  k <- length(unique(group))
+  n <- table(group)
+  n_sample <- sum(n)
+
+  F_obs <- calc_stats(response, group)
+  F_perm <- numeric(R)
+  for (i in 1:R) {
+    idx <- vector("list", k)  
+    number <- 1:n_sample 
+    
+    for (j in 1:k) {
+      n_j <- n[j] 
+      idx[[j]] <- sample(x = number, size = n_j, replace = FALSE)  
+      number <- setdiff(number, idx[[j]]) 
+    }
+    perm_response <- unlist(lapply(idx, function(x) response[x]))
+    F_perm[i] <- calc_stats(perm_response, group)
+  }
+  
+  p_value <- mean(F_perm > F_obs)
+  return(p_value)
+}
+```
+
+Ta thu được kết quả như sau :
+
+```{r}
+perm_aov(diabetes_data$diabetes_012,diabetes_data$age,10)
+```
+
+```{r}
+perm_aov(diabetes_data$diabetes_012,diabetes_data$gen_hlth,10)
+```
+
+```{r}
+perm_aov(diabetes_data$diabetes_012,diabetes_data$income,10)
+```
+
+```{r}
+perm_aov(diabetes_data$diabetes_012,diabetes_data$education,10)
+```
+
+#### c) Với nhóm biến mang dữ liệu liên tục ,ta xem xét sự liên quan giữa nhóm giới tính và nhóm có hoạt động thể chất, ta có bảng thống kê như sau:
+
+```{r}
+results <- list()
+
+group_vars <- c("phys_activity", "sex")
+
+for (group_var in group_vars) {
+  for (var in c("bmi", "ment_hlth", "phys_hlth")) {
+    results[[paste(group_var, var, sep = "_")]] <- diabetes_data |> 
+      group_by(.data[[group_var]]) |> 
+      summarise(
+        n = n(),
+        tb = mean(.data[[var]], na.rm = TRUE),
+        dlc = sd(.data[[var]], na.rm = TRUE)
+      )
+    print(paste("Group by:", group_var, "- Variable:", var))
+    print(results[[paste(group_var, var, sep = "_")]])
+  }
+}
+```
+##### Ta tiến hành kiểm định bằng phương pháp permutation test :
+
+```{r}
+perm_test <- function(x, y, R, alter) {
+  mean_A <- split(x,y)[[1]] |> mean()
+  mean_B <- split(x,y)[[2]] |> mean()
+  mean_diff <- mean_A - mean_B
+  
+  nA <- split(x,y)[[1]] |> length()
+  nB <- split(x,y)[[2]] |> length()
+  n <- nA + nB
+  
+  res_perm <- numeric(R)
+  for (i in 1:R) {
+    idx_a <- sample(x = 1:n, size = nA, replace = FALSE)  
+    idx_b <- setdiff(x = 1:n, y = idx_a)                 
+    res_perm[i] <- mean(x[idx_a]) - mean(x[idx_b])       
+  }
+  
+  if (alter == "left"){
+    p_value = mean(res_perm < (mean_A - mean_B))
+  } else {
+    if (alter == "right"){
+      p_value = mean(res_perm > (mean_A - mean_B))
+    }
+  else {
+      p_value = mean(abs(res_perm) > abs(mean_A - mean_B))
+    }
+  }
+  return(list(
+    p_value = p_value
+  ))
+}
+```
+
+```{r}
+perm_test(diabetes_data$high_bp,diabetes_data$bmi,1000,alter='two_sided')
+```
+
+```{r}
+perm_test(diabetes_data$high_chol,diabetes_data$bmi,1000,alter='two_sided')
+```
+
+```{r}
+perm_test(diabetes_data$sex,diabetes_data$ment_hlth,10,alter = 'two_sided')
+```
+
+```{r}
+perm_test(diabetes_data$sex,diabetes_data$phys_activity,10,alter = 'two_sided')
+```
+
+```{r}
+perm_test(diabetes_data$phys_hlth,diabetes_data$bmi,1000,alter='two_sided')
+```
+
+```{r}
+perm_test(diabetes_data$phys_hlth,diabetes_data$ment_hlth,10,alter = 'two_sided')
+```
+
+```{r}
+perm_test(diabetes_data$phys_hlth,diabetes_data$phys_activity,10,alter = 'two_sided')
+```
+##### Ta tiếp tục xét thêm giả thuyết khác cũng cùng phương pháp permutation test phía bên trái với những nhóm biến có p_value =0 vừa đề cập ở trên:
+
+```{r}
+perm_test(diabetes_data$sex,diabetes_data$ment_hlth,10,alter = 'left')
+```
+
+```{r}
+perm_test(diabetes_data$sex,diabetes_data$phys_activity,10,alter = 'left')
+```
+
+```{r}
+perm_test(diabetes_data$phys_hlth,diabetes_data$ment_hlth,10,alter = 'left')
+```
+
+```{r}
+perm_test(diabetes_data$phys_hlth,diabetes_data$phys_activity,10,alter = 'left')
+```
+
+#### d) Bên cạnh đó liệu giữa những nhóm người bị bệnh, không bị bệnh và có nguy cơ thì BMI của họ liệu có khác nhau?
+
+##### Ta có bảng thống kê và violin plot giữa biến mục tiêu và BMI như sau:
+
+```{r}
+diabetes_data |> group_by(diabetes_012) |>
+  summarise(n = n(),
+            tb = mean(bmi))
+```
+```{r}
+ggplot(diabetes_data, aes(x = as.factor(diabetes_012), y = bmi, fill = as.factor(diabetes_012))) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  labs(
+    title = "Distribution of BMI by Diabetes Status",
+    x = "Diabetes Status (0 = No Diabetes, 1 = Prediabetes, 2 = Diabetes)",
+    y = "BMI",
+    fill = "Diabetes Status"
+  ) +
+  theme_minimal()
+```
+
+##### Ta tiến hành dùng permutation anova
+
+```{r}
+perm_aov(diabetes_data$bmi,diabetes_data$diabetes_012,10)
+```
+
+## 3.2 Resampling Method
+### 3.2.1 Processing Data
+
+Dữ liệu **diabetes_012_health_indicators_BRFSS2015.csv**
+có 22 biến trong tập dữ liệu. Trong đó, có 8 biến ta sẽ không sử dụng
+nên ta sẽ tách riêng nó ra khỏi dữ liệu chúng ta phân tích.
+
+```{r}
+data <- diabetes
+data <- data |>
+  dplyr::select(diabetes_012, high_bp, high_chol, chol_check, bmi, smoker, stroke, 
+         heart_diseaseor_attack, phys_activity, sex, age, education, income, gen_hlth)
+
+glimpse(data)
+```
+
+-   Chuyển sang dạng factor:
+
+```{r}
+data$high_bp <- factor(data$high_bp, levels = c(0, 1), labels = c("No High BP", "High BP"))
+data$high_chol <- factor(data$high_chol, levels = c(0, 1), labels = c("No High Chol", "High Chol"))
+data$chol_check <- factor(data$chol_check, levels = c(0, 1), labels = c("No Check", "Checked"))
+data$phys_activity <- factor(data$phys_activity, levels = c(0, 1), labels = c("No", "Yes"))
+data$diabetes_012 <- factor(data$diabetes_012, levels = c(0, 1, 2), labels = c("No Diabetes", "Pre-Diabetes", "Diabetes"))
+data$smoker <- factor(data$smoker, levels = c(0, 1), labels = c("No Smoke", "Smoked"))
+data$stroke <- factor(data$stroke, levels = c(0, 1), labels = c("No Stroke","Stroked"))
+data$heart_diseaseor_attack <- factor(data$heart_diseaseor_attack, levels = c(0, 1), labels = c("No CHD or No MI", "CHD or MI")) # No CHD or MI la nhung nguoi khong bi mac benh tim mạch vành (CHD) hoặc nhồi máu cơ tim (MI)
+
+data$age <- factor(data$age,
+                      levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13), 
+                      labels = c("Age 18 - 24",
+                                 "Age 25 - 29",
+                                 "Age 30 - 34",
+                                 "Age 35 - 39",
+                                 "Age 40 - 44",
+                                 "Age 45 - 49",
+                                 "Age 50 - 54",
+                                 "Age 55 - 59",
+                                 "Age 60 - 64",
+                                 "Age 65 - 69",
+                                 "Age 70 - 74",
+                                 "Age 75 - 79",
+                                 "Age 80 or older"),
+                      ordered = TRUE) 
+
+data$education <- factor(data$education,
+                      levels = c(1, 2, 3, 4, 5, 6), 
+                      labels = c("Never attended school or only kindergarten",
+                                 "Grades 1 - 8 (Elementary)",
+                                 "Grades 9 - 11 (Some high school)",
+                                 "Grade 12 or GED (High school graduate)",
+                                 "College 1 year to 3 years (Some college or technical school)",
+                                 "College 4 years or more (College graduate)"),
+                      ordered = TRUE) 
+
+data$income <- factor(data$income,
+                      levels = c(1, 2, 3, 4, 5, 6, 7, 8), 
+                      labels = c("Less than $10,000",
+                                 "$10,000 to $15,000",
+                                 "$15,000 to $20,000",
+                                 "$20,000 to $25,000",
+                                 "$25,000 to $35,000",
+                                 "$35,000 to $50,000",
+                                 "$50,000 to $75,000",
+                                 "$75,000 or more"),
+                      ordered = TRUE) 
+
+data$sex <- factor(data$sex, levels =c(0, 1), labels = c("Female","Male"))
+
+data$gen_hlth <- factor(data$gen_hlth, 
+                        levels = c(1,2,3,4,5),
+                        labels = c("Excellent",
+                                   "Very Good",
+                                   "Good",
+                                   "Fair",
+                                   "Poor"))
+```
+
+```{r}
+glimpse(data)
+```
+
+### 3.2.2 Thực hiện A/B testing theo Resampling method:
+
+Vì phương pháp Resampling method được học chỉ áp dụng cho biến phản đồi là định tính và biến còn lại là định lượng cho nên ở đây, ta chỉ áp dụng với `bmi`, còn các biến khác, ta chỉ vẽ hình tỷ lệ các nhóm và nhận xét sự ảnh hưởng của chúng lên `diabetes_012`.
+
+#### 3.2.2.1 Thống kê suy luận các yếu tố liên quan đến sức khỏe 
+(`bmi`, `high_bp`, `high_chol`, `phys_activity` và `diabetes_012`)
+
+Thống kê mô tả cho `bmi`, `high_bp`, `high_chol`, `phys_activity` và
+`diabetes_012`:
+
+```{r}
+# Chọn các biến cần tính toán thống kê mô tả
+data2.1 <- data[, c("bmi", "high_bp", "high_chol", "phys_activity", "diabetes_012")]
+
+summary(data2.1)
+```
+
+**Nhận xét**:
+
+-   Nhìn vào `bmi` thì ta thấy giá trị nhỏ nhất là 12.00 và giá trị lớn
+    nhất là 98.00, hai giá trị cách nhau cũng khá xa. Giá trị trung bình
+    và độ lệch chuẩn thì tương đối gần nhau.
+
+-   Các biến còn lại như `high_bp`, `high_chol`, `phys_activity`,
+    `diabetes_012` thì có sự chênh lệch giữa các nhóm trong cùng 1 thuộc
+    tính.
+
+##### A/B testing (Resampling method):
+Kiểm tra mối liên hệ giữa hai biến `diabetes_012` và `bmi`:
+
+```{r}
+# Trực quan hóa phân bố BMI theo tình trạng tiểu đường
+ggplot(data, aes(x = factor(diabetes_012), y = bmi, fill = factor(diabetes_012))) +
+  geom_boxplot() +
+  labs(title = "Phân bố của BMI theo tình trạng tiểu đường (Diabetes_012)", 
+       x = "Tình trạng tiểu đường (Diabetes_012)", 
+       y = "BMI", 
+       fill = "Tình trạng tiểu đường") +
+  theme_minimal()
+```
+
+*Nhận xét*: Nhìn vào biểu đồ ta thấy chỉ số BMI ở nhóm mắc bệnh tiểu
+đường cao hơn hai nhóm còn lại. Ta có thể nói người càng có BMI cao càng
+dễ mắc bệnh tiểu đường.
+
+-   **Giả thuyết** $$
+    H_0: \text{Không có mối quan hệ giữa bmi và tình trạng tiểu đường (diabetes_012)}
+    $$
+
+-   **Đối thuyết** $$
+    H_1: \text{Có mối quan hệ giữa bmi và tình trạng tiểu đường (diabetes_012)}
+    $$
+
+```{r}
+resampling_test <- function(data, continuous_var, group_var, R = 1000) {
+  # Bước 1: Tính giá trị chênh lệch ban đầu giữa các nhóm
+  observed_means <- tapply(data[[continuous_var]], data[[group_var]], mean, na.rm = TRUE)
+  observed_diff <- max(observed_means) - min(observed_means) # Hiệu giữa giá trị lớn nhất và nhỏ nhất
+  
+  # Bước 2: Lặp lại R lần để tạo các mẫu ngẫu nhiên
+  resampled_diff <- numeric(R)
+  for (i in 1:R) {
+    # Lấy mẫu ngẫu nhiên BMI nhưng giữ nguyên nhóm diabetes_012
+    resampled_data <- data
+    resampled_data[[continuous_var]] <- sample(data[[continuous_var]], replace = TRUE)
+    
+    # Tính chênh lệch trung bình cho dữ liệu mẫu lại
+    resampled_means <- tapply(resampled_data[[continuous_var]], resampled_data[[group_var]], mean, na.rm = TRUE)
+    resampled_diff[i] <- max(resampled_means) - min(resampled_means)
+  }
+  
+  # Bước 3: Tính p-value
+  p_value <- mean(resampled_diff >= observed_diff)
+  
+  # Trả về p-value
+  return(p_value)
+}
+
+# Gọi hàm kiểm tra mối quan hệ giữa BMI và Diabetes_012
+p_value <- resampling_test(data, continuous_var = "bmi", group_var = "diabetes_012", R = 1000)
+
+# Hiển thị kết quả p-value
+cat("P-value =", p_value, "\n")
+
+```
+
+**Nhận xét**: vì P-value bằng 0 nên ta sẽ bác bỏ H0. Vậy có mối quan hệ
+giữa bmi và tình trạng tiểu đường (`diabetes_012`).
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `high_bp`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và high_bp
+diabetes_highbp_ratio <- data %>%
+  group_by(high_bp, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(high_bp) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng
+ggplot(diabetes_highbp_ratio, aes(x = factor(high_bp), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") +  # Biểu đồ cột chồng
+  labs(
+    title = "Tỷ lệ giữa các nhóm HighBP và Diabetes_012",
+    x = "Tình trạng HighBP",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+**Nhận xét**:
+
+-   Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường ở nhóm
+    No High BP cao hơn so với nhóm High BP.
+
+-   Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường ở nhóm No High
+    BP thấp hơn so với nhóm High BP.
+
+-   Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường ở nhóm High BP
+    cao hơn so với nhóm No High BP.
+
+-\> Từ những điều trên ta thấy có mối liên quan giữa tình trạng huyết áp
+cao và nguy cơ mắc tiểu đường (huyết áp càng cao thì nguy cơ mắc bệnh
+tiểu đường càng cao).
+
+-\> Không dùng được resampling method do phương pháp không áp dụng được
+cho hai biến định tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabtes_012` và `high_chol`:
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và high_chol
+diabetes_highchol_ratio <- data %>%
+  group_by(high_chol, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(high_chol) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng
+ggplot(diabetes_highchol_ratio, aes(x = factor(high_chol), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") +  # Biểu đồ cột chồng
+  labs(
+    title = "Tỷ lệ giữa các nhóm High Cholesterol và Diabetes_012",
+    x = "Tình trạng High Cholesterol",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+**Nhận xét**:
+
+-   Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường ở nhóm
+    No High Chol cao hơn so với nhóm High Chol.
+
+-   Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường ở nhóm No High
+    Chol thấp hơn so với nhóm High Chol.
+
+-   Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường ở nhóm High
+    Chol cao hơn so với nhóm No High Chol.
+
+-\> Từ những điều trên ta thấy có mối liên quan giữa tình trạng
+Cholesterol cao và nguy cơ mắc tiểu đường (Cholesterol càng cao thì nguy
+cơ mắc bệnh tiểu đường càng cao).
+
+-\> Không dùng được resampling method do phương pháp không áp dụng được
+cho hai biến định tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `phys_activity`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và phys_activity
+diabetes_physactivity_ratio <- data %>%
+  group_by(phys_activity, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(phys_activity) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng
+ggplot(diabetes_physactivity_ratio, aes(x = factor(phys_activity), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") +  # Biểu đồ cột chồng
+  labs(
+    title = "Tỷ lệ giữa các nhóm Physical Activity và Diabetes_012",
+    x = "Tình trạng Physical Activity",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+**Nhận xét**:
+
+-   Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường ở nhóm
+    không hoạt động thể chất thấp hơn so với nhóm có hoạt động thể chất
+    .
+
+-   Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường ở nhóm không
+    hoạt động thể chất có vẻ ngang với nhóm có hoạt động thể chất.
+
+-   Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường ở nhóm có hoạt
+    động thể chất thấp hơn so với nhóm không hoạt động thể chất.
+
+-\> Từ những điều trên ta thấy có mối liên quan giữa nhóm hoạt động thể
+chất trong vòng 30 ngày và nguy cơ mắc tiểu đường (có hoạt động thể chất
+thì tỉ lệ mắc bệnh tiểu đường thấp hơn).
+
+-\> Không dùng được resampling method do phương pháp không áp dụng được
+cho hai biến định tính.
+
+#### 3.2.2.2 Phân tích 1 số thói quen và bệnh còn lại dẫn tới nguy cơ bệnh tiểu đường
+(`bmi`, `smoker`, `heart_diseaseor_attack`, `diabetes_012`)
+
+Thống kê mô tả:
+
+```{r}
+# Chọn các biến cần tính toán thống kê mô tả
+data2.2 <- data[, c( "smoker","stroke", "heart_diseaseor_attack", "diabetes_012")]
+
+summary(data2.2)
+```
+
+**Nhận xét**:
+
+-   Các biến như `smoker`,`stroke`, `heart_diseaseor_attack`,
+    `diabetes_012` có sự chênh lệch giữa các nhóm trong cùng 1 thuộc
+    tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `smoker`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và smoker
+diabetes_smoker_ratio <- data %>%
+  group_by(smoker, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(smoker) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng
+ggplot(diabetes_smoker_ratio, aes(x = factor(smoker), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") +  # Biểu đồ cột chồng
+  labs(
+    title = "Tỷ lệ giữa các nhóm Smoker và Diabetes_012",
+    x = "Tình trạng Smoker",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+
+**Nhận xét**: 
+
+- Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường ở nhóm No Smoke cao hơn so với nhóm Smoke.
+
+- Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường ở nhóm No Smoke thấp hơn một chút so với nhóm Smoke nhưng không đáng kể.
+
+- Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường ở nhóm Smoke cao hơn so với nhóm No Smoke.
+
+-> Từ những điều trên ta thấy có mối liên quan giữa những người đã hút 100 điếu thuốc trong cuộc đời mình và nguy cơ mắc tiểu đường (hút thuốc càng nhiều thì nguy cơ mắc bệnh tiểu đường càng cao).
+
+-> Không dùng được resampling method do phương pháp không áp dụng được cho hai biến định tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `stroke` và `diabetes_012`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và stroke
+diabetes_stroke_ratio <- data %>%
+  group_by(stroke, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(stroke) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng với stroke
+ggplot(diabetes_stroke_ratio, aes(x = factor(stroke), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") + 
+  labs(
+    title = "Tỷ lệ giữa các nhóm Stroke và Diabetes_012",
+    x = "Tình trạng Stroke",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+**Nhận xét**: 
+
+- Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường ở nhóm No Stroke cao hơn so với nhóm Stroke
+
+- Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường ở nhóm No Stroke thấp hơn một chút so với nhóm Stroke nhưng không đáng kể.
+
+- Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường ở nhóm Stroke cao hơn so với nhóm No Stroke
+
+-> Từ những điều trên ta thấy có mối liên quan giữa những người đã từng đột quỵ và nguy cơ mắc tiểu đường (những người từng đột quỵ có nguy cơ mắc bệnh tiểu đường cao hơn).
+
+-> Không dùng được resampling method do phương pháp không áp dụng được cho hai biến định tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `heart_diseaseor_attack`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và heart_diseaseor_attack
+diabetes_heart_disease_ratio <- data %>%
+  group_by(heart_diseaseor_attack, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(heart_diseaseor_attack) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng với heart_diseaseor_attack
+ggplot(diabetes_heart_disease_ratio, aes(x = factor(heart_diseaseor_attack), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") + 
+  labs(
+    title = "Tỷ lệ giữa các nhóm Heart Disease và Diabetes_012",
+    x = "Tình trạng Bệnh tim mạch",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+**Nhận xét**: 
+
+- Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường ở nhóm No CHD or No MI cao hơn so với nhóm CHD or MI.
+
+- Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường ở nhóm No CHD or No MI thấp hơn một chút so với nhóm CHD or MI nhưng không đáng kể.
+
+- Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường ở nhóm No CHD or No MI cao hơn so với nhóm CHD or MI.
+
+-> Từ những điều trên ta thấy có mối liên quan giữa những người bệnh tim mạch vành (CHD) hoặc nhồi máu cơ tim (MI) và nguy cơ mắc tiểu đường (những người từng mắc 1 trong 2 bệnh trên có nguy cơ mắc bệnh tiểu đường cao hơn).
+
+-> Không dùng được resampling method do phương pháp không áp dụng được cho hai biến định tính.
+
+#### 3.2.2.3: Phân tích ảnh hưởng của các yếu tố kinh tế - xã hội đến tỷ lệ mắc bệnh tiểu đường (`age`, `education`, `income`, `diabetes_012`)
+
+```{r}
+# Chọn các biến cần tính toán thống kê mô tả
+data2.3 <- data[, c("age", "education", "income", "diabetes_012")]
+
+summary(data2.3)
+```
+
+**Nhận xét**:
+
+-   age: Dữ liệu chủ yếu tập trung vào người trung niên và cao tuổi (45
+    tuổi trở lên), trong đó nhóm "Other" chiếm tỷ lệ lớn nhất.
+
+-   education: Phần lớn có trình độ cao (tốt nghiệp đại học hoặc hơn),
+    trong khi các nhóm có học vấn thấp hơn chiếm tỷ lệ nhỏ.
+
+-   Thu nhập: Đa số thuộc nhóm thu nhập cao (trên 75.000 USD/năm), nhưng
+    vẫn có đủ sự phân bố ở các mức thu nhập thấp hơn.
+
+-   diabetes_012: Phần lớn không mắc bệnh, nhưng vẫn có 1 số lượng người
+    người mắc tiểu đường và tiền tiểu đường.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `age`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và age
+diabetes_age_ratio <- data %>%
+  group_by(age, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(age) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng với age
+ggplot(diabetes_age_ratio, aes(x = factor(age), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") + 
+  labs(
+    title = "Tỷ lệ giữa các nhóm Age và Diabetes_012",
+    x = "Độ tuổi",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+**Nhận xét**: 
+
+- Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường có xu hướng giảm dần từ 18 đến 74 tuổi.
+
+- Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường có xu hướng tăng dần theo độ tuổi nhưng không rõ ràng.
+
+- Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường có xu hướng tăng dần từ 18 đến 74 tuổi.
+
+-> Từ những điều trên ta thấy có mối liên quan giữa nhóm tuổi và nguy cơ mắc tiểu đường (người càng lớn tuổi thì càng dễ mắc bệnh tiểu đường).
+
+-> Không dùng được resampling method do phương pháp không áp dụng được cho hai biến định tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `imcome`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và income
+diabetes_income_ratio <- data %>%
+  group_by(income, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(income) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng với income
+ggplot(diabetes_income_ratio, aes(x = factor(income), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") + 
+  labs(
+    title = "Tỷ lệ giữa các nhóm Income và Diabetes_012",
+    x = "Thu nhập",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+**Nhận xét**: 
+
+- Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường có xu hướng tăng bắt đầu từ nhóm thu nhập 10,000$ - 15,000$ trở đi.
+
+- Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường có xu hướng giảm dần nhưng không rõ ràng.
+
+- Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường có xu hướng giảm bắt đầu từ nhóm thu nhập 10,000$ - 15,000$ trở đi.
+
+-> Từ những điều trên ta thấy có mối liên quan giữa nhóm thu nhập và nguy cơ mắc tiểu đường (người có thu nhập càng thấp thì có nguy cơ mắc bệnh tiểu đường càng cao).
+
+-> Không dùng được resampling method do phương pháp không áp dụng được cho hai biến định tính.
+
+##### Kiểm tra mối quan hệ giữa hai biến `diabetes_012` và `education`
+
+```{r}
+# Tính tỷ lệ giữa diabetes_012 và education
+diabetes_education_ratio <- data %>%
+  group_by(education, diabetes_012) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(education) %>%
+  mutate(
+    total = sum(count),
+    ratio = count / total
+  )
+
+# Vẽ biểu đồ cột chồng với education
+ggplot(diabetes_education_ratio, aes(x = factor(education), y = ratio, fill = factor(diabetes_012))) +
+  geom_bar(stat = "identity", position = "fill") + 
+  labs(
+    title = "Tỷ lệ giữa các nhóm Education và Diabetes_012",
+    x = "Trình độ học vấn",
+    y = "Tỷ lệ",
+    fill = "Tình trạng Tiểu đường (diabetes_012)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Xoay nhãn trục x nếu cần
+
+```
+
+**Nhận xét**: 
+
+- Nhóm No Diabetes: tỷ lệ những người không bị bệnh tiểu đường có xu hướng tăng theo trình độ học vấn bắt đầu từ nhóm lớp 1-8 trở đi.
+
+- Nhóm Pre-Diabetes: tỷ lệ những người tiền tiểu đường có xu hướng giảm dần nhưng không rõ ràng.
+
+- Nhóm Diabetes: tỷ lệ những người mắc bệnh tiểu đường có xu hướng giảm theo trình độ học vấn bắt đầu từ nhóm lớp 1-8 trở đi
+
+-> Từ những điều trên ta thấy có mối liên quan giữa nhóm thu nhập và nguy cơ mắc tiểu đường (người có trình độ học vấn càng cao thì có nguy cơ mắc bệnh tiểu đường càng thấp).
+
+-> Không dùng được resampling method do phương pháp không áp dụng được cho hai biến định tính.
+
+# 4. Classification Model
+## 4.0 Choose Variable/ Formula Model: Logistic & Multinominal Logistic
+
+```{r}
+corrplot(cor(diabetes))
+cor(diabetes[,c(1)], diabetes[,-c(1)])
+```
+
+### 4.0.1 AIC
+```{r, eval = FALSE}
+#AIC cho 2 nhóm
+dt_logistic <- diabetes |>
+  mutate(diabetes_012 = factor(diabetes_012, ordered = TRUE),
+         age = factor(age),
+         education = factor(education),
+         income = factor(income),
+         gen_hlth = factor(gen_hlth)) 
+dt_logistic$diabetes_012[dt_logistic$diabetes_012 == 2] <- 1
+
+library(MASS)
+model <- glm(diabetes_012 ~ ., data = dt_logistic, family = "binomial")
+model_aic <- stepAIC(model, direction = "backward")
+summary(model_aic)
+```
+
+```{r, eval = FALSE}
+#AIC cho 3 nhóm
+dt_multilogistic <- diabetes |> 
+  mutate(diabetes_012 = factor(diabetes_012, ordered = TRUE),
+         age = factor(age),
+         income = factor(income),
+         gen_hlth = factor(gen_hlth)) 
+
+model <- multinom(diabetes_012 ~ ., data = dt_multilogistic, maxit = 1500)
+model_aic <- stepAIC(model, direction = "backward")
+summary(model_aic)
+```
+
+### 4.0.2 The Formula Models Used.
+
+Phần này dùng cho các phương pháp trong classification models. Note trong mỗi formula là những mô hình sử dụng formula đó.
+
+```{r}
+# Logistic
+# Multinominal Logistic
+# Naive Bayes
+# LDA
+# QDA
+
+# 15 biến
+formula_model <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + smoker + stroke + 
+  heart_diseaseor_attack + phys_activity + hvy_alcohol_consump + gen_hlth + 
+  ment_hlth + phys_hlth + diff_walk + age + income
+```
+
+```{r}
+# Logistic 
+# Bỏ smoker
+formula_model_2 <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + stroke + 
+  heart_diseaseor_attack + phys_activity + hvy_alcohol_consump + gen_hlth + 
+  ment_hlth + phys_hlth + diff_walk + age + income
+```
+
+```{r}
+# Bỏ smoker và phys_activity
+formula_model_2b <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + stroke + 
+  heart_diseaseor_attack + hvy_alcohol_consump + gen_hlth + 
+  ment_hlth + phys_hlth + diff_walk + age + income
+```
+
+```{r}
+# Logistic
+# Bỏ smoker và phys_activity và diff_walk
+formula_model_3 <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + stroke + 
+  heart_diseaseor_attack + hvy_alcohol_consump + gen_hlth + 
+  ment_hlth + phys_hlth + age + income
+```
+
+```{r}
+# Logistic
+# Bỏ smoker và phys_activity và diff_walk và stroke
+formula_model_4 <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + 
+  heart_diseaseor_attack + hvy_alcohol_consump + gen_hlth + 
+  ment_hlth + phys_hlth + age + income
+```
+
+```{r}
+# Multinominal Logistic
+# Bỏ smoker, stroke, phys_activity, ment_hlth
+formula_model_5 <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + 
+  heart_diseaseor_attack + hvy_alcohol_consump + gen_hlth + 
+  phys_hlth + diff_walk + age + income
+```
+
+```{r}
+# Multinominal Logistic
+# Bỏ smoker, stroke, phys_activity, ment_hlth, heart_diseaseor_attack
+formula_model_6 <- diabetes_012 ~ high_bp + high_chol + chol_check + bmi + 
+  hvy_alcohol_consump + gen_hlth + 
+  phys_hlth + diff_walk + age + income
+```
+
+## 4.1 Logistic: 
+### 4.1.1 Dữ liệu gốc
+```{r}
+dt_logistic <- diabetes |>
+  mutate(diabetes_012 = factor(diabetes_012),
+         age = factor(age),
+         income = factor(income),
+         gen_hlth = factor(gen_hlth))
+
+# Đưa về dạng chỉ hai nhóm 0 và 1
+dt_logistic$diabetes_012[dt_logistic$diabetes_012 == 2] <- 1
+glimpse(dt_logistic)
+```
+
+```{r}
+levels(dt_logistic$diabetes_012)
+```
+
+#### Chia dữ liệu train - test
+```{r}
+set.seed(1)
+train_indices <- sample(seq_len(nrow(dt_logistic)), size = 0.9 * nrow(dt_logistic))
+train_logistic <- dt_logistic[train_indices, ]  # 90% training data
+test_logistic <- dt_logistic[-train_indices, ]  # 10% testing data
+```
+
+#### Mô hình 15 biến: formula_model
+```{r}
+# gồm 15 biến đã chọn
+logistic_0 <- glm(formula = formula_model, 
+                  data = train_logistic, 
+                  family = binomial)
+summary(logistic_0)
+exp(coef(logistic_0))
+```
+
+#### Mô hình 14 biến: formula_model_2
+```{r}
+# bỏ smoker
+logistic_1 <- glm(formula = formula_model_2, 
+                  data = train_logistic, 
+                  family = binomial)
+summary(logistic_1)
+```
+
+```{r}
+#Tỷ lệ cược - odds cho tất cả mọi biến:
+exp(coef(logistic_1))
+```
+
+```{r}
+# Tính xác suất và phân loại xác suất, làm ví dụ mẫu
+pred_prob <- predict(logistic_1, newdata = test_logistic, 
+                           type = "response")
+pred_prob <- ifelse(pred_prob > 0.5, "1", "0")
+pred_prob[1:10]
+test_logistic$diabetes_012[1:10]
+```
+
+```{r}
+# Tính xác suất và phân loại xác suất, tỷ lệ dự đoán đúng
+pred_prob <- predict(logistic_1, newdata = test_logistic, 
+                           type = "response")
+pred_prob <- ifelse(pred_prob > 0.5, "1", "0")
+mean(test_logistic$diabetes_012 == pred_prob)
+```
+
+### 4.1.2 Dữ liệu với bmi < 70
+
+```{r}
+dt_logistic_2 <- diabetes |>
+  mutate(diabetes_012 = factor(diabetes_012, ordered = TRUE),
+         age = factor(age),
+         education = factor(education),
+         income = factor(income),
+         gen_hlth = factor(gen_hlth)) 
+dt_logistic_2 <- subset(dt_logistic_2, bmi <= 70)
+
+# Đưa về dạng chỉ hai nhóm 0 và 1
+dt_logistic_2$diabetes_012[dt_logistic_2$diabetes_012 == 2] <- 1
+```
+
+#### Chia dữ liệu train - test
+```{r}
+set.seed(2)
+train_indices <- sample(seq_len(nrow(dt_logistic_2)), size = 0.9 * nrow(dt_logistic_2))
+train_logistic_2 <- dt_logistic_2[train_indices, ]  # 90% training data
+test_logistic_2 <- dt_logistic_2[-train_indices, ]  # 10% testing data
+```
+
+#### Mô hình 15 biến: formula_model
+```{r}
+# 15 biến
+logistic_2 <- glm(formula = formula_model,
+                  data = train_logistic_2,
+                  family = binomial)
+summary(logistic_2)
+```
+
+#### Mô hình 13 biến: formula_model_2b
+```{r}
+# Bỏ đi smoker và phys_activity
+logistic_2 <- glm(formula = formula_model_2b,
+                  data = train_logistic_2,
+                  family = binomial)
+summary(logistic_2)
+```
+
+```{r}
+#Tỷ lệ cược - odds cho tất cả mọi biến:
+exp(coef(logistic_2))
+```
+
+```{r}
+# Tính xác suất và phân loại xác suất, tỷ lệ dự đoán đúng
+pred_prob <- predict(logistic_2, newdata = test_logistic_2, 
+                           type = "response")
+pred_prob <- ifelse(pred_prob > 0.5, "1", "0")
+mean(test_logistic_2$diabetes_012 == pred_prob)
+```
+
+### 4.1.3 Kết luận 1: mô hình 13 biến
+
+Xây dựng model 13 biến trên dữ liệu gốc.
+
+```{r}
+# Bỏ đi smoker và phys_activity
+logistic_3 <- glm(formula = formula_model_2b,
+                  data = train_logistic,
+                  family = binomial)
+summary(logistic_3)
+```
+
+```{r}
+#Tỷ lệ cược - odds cho tất cả mọi biến:
+exp(coef(logistic_3))
+```
+
+```{r}
+# Tính xác suất và phân loại xác suất, tỷ lệ dự đoán đúng
+pred_prob <- predict(logistic_3, newdata = test_logistic, 
+                           type = "response")
+pred_prob <- ifelse(pred_prob > 0.5, "1", "0")
+mean(test_logistic$diabetes_012 == pred_prob)
+```
+
+### 4.1.4 Đánh giá mô hình
+
+#### AUC, ROC
+```{r}
+prob_pred_logistic <- predict(logistic_3, type = "response")
+library(pROC)
+out_roc <- roc(train_logistic$diabetes_012 ~ prob_pred_logistic)
+out_roc$auc
+```
+
+```{r}
+ci.auc(out_roc, conf.level = 0.95)
+plot(out_roc, legacy.axes = TRUE, asp = 0)
+```
+
+#### Threshold
+```{r}
+out_youd <- pROC::coords(out_roc, "best", 
+                   ret = c("threshold", "specificity", "sensitivity"),
+                   best.method = "youden")
+print(out_youd)
+
+out_clost <- pROC::coords(out_roc, "best", 
+                    ret = c("threshold", "specificity", "sensitivity"),
+                    best.method = "closest.topleft")
+print(out_clost)
+```
+
+```{r}
+pred_prob <- ifelse(prob_pred_logistic > out_youd$threshold, "1", "0")
+mean(train_logistic$diabetes_012 == pred_prob)
+
+pred_prob <- ifelse(prob_pred_logistic > out_clost$threshold, "1", "0")
+mean(train_logistic$diabetes_012 == pred_prob)
+```
+
+### 4.1.5 Dữ liệu cân bằng
+
+#### Phương pháp cân bằng dữ liệu
+
+```{r, message=FALSE}
+smotenc_diabetes1 <- diabetes |>
+  mutate(diabetes_012 = factor(diabetes_012))
+set.seed(123)
+smotenc_diabetes1 <- smotenc(df = smotenc_diabetes1, var = "diabetes_012",
+                          k = 5, over_ratio = 0.5)
+glimpse(smotenc_diabetes1)
+```
+
+#### Kiểm tra số nhóm và số lượng mỗi nhóm
+```{r}
+with(smotenc_diabetes1, table(diabetes_012))
+```
+
+#### Thống kê mô tả cho dữ liệu
+```{r}
+summary(smotenc_diabetes1)
+```
+
+**Nhận xét:** Các biến định tính trở thành định lượng - là các số liên tục trong khoảng min và max, do đó, không thể sử dụng factor.
+
+```{r}
+# Đưa về dạng chỉ hai nhóm 0 và 1
+smotenc_diabetes1$diabetes_012[smotenc_diabetes1$diabetes_012 == 2] <- 1
+```
+
+#### Chia dữ liệu train - test
+```{r}
+set.seed(5)
+train_indices <- sample(seq_len(nrow(smotenc_diabetes1)), 
+                        size = 0.9 * nrow(smotenc_diabetes1))
+smotenc_diabetes_train <- smotenc_diabetes1[train_indices, ]  
+smotenc_diabetes_test <- smotenc_diabetes1[-train_indices, ]  
+```
+
+```{r}
+with(smotenc_diabetes_train, table(diabetes_012))
+with(smotenc_diabetes_test, table(diabetes_012))
+```
+
+#### Mô hình 13 biến: formula_model_2b
+```{r}
+logistic_3cb <- glm(formula = formula_model_2b, 
+                        data = smotenc_diabetes_train, 
+                        family = binomial)
+summary(logistic_3cb)
+```
+
+```{r}
+# Bỏ diff_walk
+logistic_4 <- glm(formula = formula_model_3, 
+                        data = smotenc_diabetes_train, 
+                        family = binomial)
+summary(logistic_4)
+```
+
+```{r}
+#Tỷ lệ cược - odds cho tất cả mọi biến:
+exp(coef(logistic_4))
+```
+
+```{r}
+pred_prob <- predict(logistic_4, newdata = smotenc_diabetes_test, 
+                           type = "response")
+pred_prob <- ifelse(pred_prob > 0.5, "1", "0")
+
+# Tính tỉ lệ dự đoán đúng
+mean(smotenc_diabetes_test$diabetes_012 == pred_prob)
+
+# Phân loại dự đoán và thực tế
+smotenc_diabetes_test$diabetes_012[1:10]
+pred_prob[1:10]
+```
+
+#### Đánh giá mô hình
+
+##### AUC, ROC
+```{r}
+prob_pred_logistic <- predict(logistic_4, type = "response")
+library(pROC)
+out_roc <- roc(smotenc_diabetes_train$diabetes_012 ~ prob_pred_logistic)
+out_roc$auc
+```
+
+```{r}
+ci.auc(out_roc, conf.level = 0.95)
+plot(out_roc, legacy.axes = TRUE, asp = 0)
+```
+
+##### Threshold
+```{r}
+out_youd <- pROC::coords(out_roc, "best", 
+                   ret = c("threshold", "specificity", "sensitivity"),
+                   best.method = "youden")
+print(out_youd)
+
+out_clost <- pROC::coords(out_roc, "best", 
+                    ret = c("threshold", "specificity", "sensitivity"),
+                    best.method = "closest.topleft")
+print(out_clost)
+```
+
+```{r}
+pred_prob <- ifelse(prob_pred_logistic > out_youd$threshold, "1", "0")
+mean(smotenc_diabetes_train$diabetes_012 == pred_prob)
+
+pred_prob <- ifelse(prob_pred_logistic > out_clost$threshold, "1", "0")
+mean(smotenc_diabetes_train$diabetes_012 == pred_prob)
+```
+
+### 4.1.6 Kết luận 2: mô hình 11 biến
+
+#### Mô hình 11 biến: formula_model_4
+```{r}
+# dữ liệu gốc
+logistic_5 <- glm(formula = formula_model_4, 
+                        data = train_logistic, 
+                        family = binomial)
+
+# dữ liệu cân bằng
+logistic_6 <- glm(formula = formula_model_4, 
+                        data = smotenc_diabetes_train, 
+                        family = binomial)
+# Tính AUC
+## dữ liệu gốc
+prob_pred_logistic5 <- predict(logistic_5, type = "response")
+out_roc5 <- roc(train_logistic$diabetes_012 ~ prob_pred_logistic5)
+out_roc5$auc
+## dữ liệu cân bằng
+prob_pred_logistic6 <- predict(logistic_6, type = "response")
+out_roc6 <- roc(smotenc_diabetes_train$diabetes_012 ~ prob_pred_logistic6)
+out_roc6$auc
+```
+
+```{r}
+# Dữ liệu gốc
+out_youd <- pROC::coords(out_roc5, "best", 
+                         ret = c("threshold", "specificity", "sensitivity"),
+                         best.method = "youden")
+print(out_youd)
+
+out_clost <- pROC::coords(out_roc5, "best", 
+                          ret = c("threshold", "specificity", "sensitivity"), 
+                          best.method = "closest.topleft")
+print(out_clost)
+
+pred_prob <- ifelse(prob_pred_logistic5 > out_youd$threshold, "1", "0")
+mean(train_logistic$diabetes_012 == pred_prob)
+
+pred_prob <- ifelse(prob_pred_logistic5 > out_clost$threshold, "1", "0")
+mean(train_logistic$diabetes_012 == pred_prob)
+```
+
+```{r}
+# Dữ liệu cân bằng
+out_youd <- pROC::coords(out_roc6, "best", 
+                         ret = c("threshold", "specificity", "sensitivity"), 
+                         best.method = "youden")
+print(out_youd)
+
+out_clost <- pROC::coords(out_roc6, "best", 
+                          ret = c("threshold", "specificity", "sensitivity"),
+                          best.method = "closest.topleft")
+print(out_clost)
+
+pred_prob <- ifelse(prob_pred_logistic6 > out_youd$threshold, "1", "0")
+mean(smotenc_diabetes_train$diabetes_012 == pred_prob)
+
+pred_prob <- ifelse(prob_pred_logistic6 > out_clost$threshold, "1", "0")
+mean(smotenc_diabetes_train$diabetes_012 == pred_prob)
+```
+
+## 4.2 Multinominal Logistic
+### 4.2.1 Dữ liệu gốc
+```{r}
+dt_multilogistic <- diabetes |> 
+  mutate(diabetes_012 = factor(diabetes_012, ordered = TRUE),
+         age = factor(age),
+         income = factor(income),
+         gen_hlth = factor(gen_hlth)) 
+```
+
+#### Chia dữ liệu train - test
+```{r}
+set.seed(3)
+train_indices <- sample(seq_len(nrow(dt_multilogistic)), size = 0.9 * nrow(dt_multilogistic))
+train_multilogistic <- dt_multilogistic[train_indices, ]  # 90% training data
+test_multilogistic <- dt_multilogistic[-train_indices, ]  # 10% testing data
+```
+
+#### Vẽ tỷ lệ ảnh hưởng lên các nhóm của các biến có nhiều nhóm
+```{r}
+# Tính tỉ lệ
+props_gen <- dt_multilogistic |> 
+  group_by(gen_hlth, diabetes_012) |>
+  summarise(count = n(), .groups = "drop") |>
+  group_by(gen_hlth) |>
+  mutate(etotal = sum(count), props = count / etotal)
+
+props_age <- dt_multilogistic |> 
+  group_by(age, diabetes_012) |>
+  summarise(count = n(), .groups = "drop") |>
+  group_by(age) |>
+  mutate(etotal = sum(count), props = count / etotal)
+
+props_income <- dt_multilogistic |> 
+  group_by(income, diabetes_012) |>
+  summarise(count = n(), .groups = "drop") |>
+  group_by(income) |>
+  mutate(etotal = sum(count), props = count / etotal)
+```
+
+```{r}
+# Vẽ tỉ lệ
+ggplot(data = props_gen,
+       mapping = aes(x = gen_hlth, y = props, group = diabetes_012)) +
+  geom_line(mapping = aes(linetype = diabetes_012)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90), legend.position = "bottom")
+
+ggplot(data = props_age,
+       mapping = aes(x = age, y = props, group = diabetes_012)) +
+  geom_line(mapping = aes(linetype = diabetes_012)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90), legend.position = "bottom")
+
+ggplot(data = props_income,
+       mapping = aes(x = income, y = props, group = diabetes_012)) +
+  geom_line(mapping = aes(linetype = diabetes_012)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90), legend.position = "bottom")
+```
+
+#### Mô hình 15 biến: formula_model
+```{r}
+multilogistic_0 <- multinom(formula = formula_model, 
+                          data = train_multilogistic, 
+                          maxit = 1500)
+summary(multilogistic_0)
+```
+
+```{r}
+#Tỷ số rủi ro tương đối - relative risk ratio
+exp(coef(multilogistic_0))
+```
+
+#### Mô hình 11 biến: formula_model_5
+```{r}
+multilogistic <- multinom(formula = formula_model_5, 
+                          data = train_multilogistic, 
+                          maxit = 1500)
+summary(multilogistic)
+```
+
+```{r}
+#Tỷ số rủi ro tương đối - relative risk ratio
+exp(coef(multilogistic))
+```
+
+```{r}
+# Tính tỉ lệ dự đoán, làm ví dụ mẫu
+pred_multilogistic <- predict(multilogistic, 
+                              newdata = test_multilogistic, 
+                              type = "probs")
+pred_multi <- predict(multilogistic, 
+                      newdata = test_multilogistic, 
+                      type = "class")
+pred_multilogistic[11:20,]
+pred_multi[11:20]
+test_multilogistic$diabetes_012[11:20]
+```
+
+```{r}
+# Tính tỉ lệ dự đoán, tỉ lệ dự đoán đúng
+pred_multi <- predict(multilogistic, 
+                      newdata = test_multilogistic, 
+                      type = "class")
+mean(as.numeric(as.character(test_multilogistic$diabetes_012)) == 
+       as.numeric(as.character(pred_multi)))
+```
+
+### 4.2.2 Dữ liệu cân bằng
+
+#### Phương pháp cân bằng dữ liệu
+```{r, message=FALSE}
+smotenc_diabetes2 <- diabetes |>
+  mutate(diabetes_012 = factor(diabetes_012))
+set.seed(123)
+smotenc_diabetes2 <- smotenc(df = smotenc_diabetes2, var = "diabetes_012",
+                          k = 5, over_ratio = 1)
+glimpse(smotenc_diabetes2)
+```
+
+**Nhận xét:** Các biến định tính trở thành định lượng - là các số liên tục trong khoảng min và max, do đó, không thể sử dụng factor.
+
+```{r}
+levels(smotenc_diabetes2$diabetes_012)
+table(smotenc_diabetes2$diabetes_012)
+```
+
+#### Chia dữ liệu train - test
+```{r}
+set.seed(5)
+train_indices <- sample(seq_len(nrow(smotenc_diabetes2)), 
+                        size = 0.9 * nrow(smotenc_diabetes2))
+smotenc_diabetes_train <- smotenc_diabetes2[train_indices, ]  # 90% training data
+smotenc_diabetes_test <- smotenc_diabetes2[-train_indices, ]  # 10% testing data
+```
+
+#### Mô hình 15 biến: formula_model
+```{r}
+multi_logistic0 <- multinom(formula = formula_model, 
+                        data = smotenc_diabetes_train, maxit = 1500)
+exp(coef(multi_logistic0))
+```
+
+#### Mô hình 10 biến: formula_model_6
+```{r}
+multi_logistic <- multinom(formula = formula_model_6, 
+                        data = smotenc_diabetes_train, maxit = 1500)
+exp(coef(multi_logistic))
+```
+
+```{r}
+# Dự đoán trên tập test
+pred_multi_logistic <- predict(multi_logistic, newdata = smotenc_diabetes_test, 
+                               type = "class")
+prop_multi_logistic <- predict(multi_logistic, newdata = smotenc_diabetes_test, 
+                               type = "probs")
+mean(as.numeric(as.character(smotenc_diabetes_test$diabetes_012)) == 
+       as.numeric(as.character(pred_multi_logistic)))
+
+prop_multi_logistic[1:10,]
+pred_multi_logistic[1:10]
+smotenc_diabetes_test$diabetes_012[1:10]
+
+# Ma trận nhầm lẫn ở tập test
+conf <- xtabs( ~ pred_multi_logistic + smotenc_diabetes_test$diabetes_012)
+conf
+```
+
+```{r}
+# Dự đoán trên tập train
+pred_multi_logistic <- predict(multi_logistic, newdata = smotenc_diabetes_train, 
+                               type = "class")
+prop_multi_logistic <- predict(multi_logistic, newdata = smotenc_diabetes_train, 
+                               type = "probs")
+mean(as.numeric(as.character(smotenc_diabetes_train$diabetes_012)) == 
+       as.numeric(as.character(pred_multi_logistic)))
+
+prop_multi_logistic[1:10,]
+pred_multi_logistic[1:10]
+smotenc_diabetes_train$diabetes_012[1:10]
+
+# Ma trận nhầm lẫn ở tập train
+conf <- xtabs( ~ pred_multi_logistic + smotenc_diabetes_train$diabetes_012)
+conf
+```
+
+## 4.3 Naive Bayes Classification
+
+Ta xét 2 TH:
+
+ - TH1: Gộp 2 nhóm Pre-Diabetes và Diabetes thành 1 nhóm rồi xây dựng mô hình cho 2 nhóm với dữ liệu gốc
+ 
+ - TH2: Xây dựng mô hình cho 3 nhóm với dữ liệu đã được cân bằng
+ 
+```{r}
+# Dữ liệu cho trường hợp 1
+dt1 <- diabetes
+dt1$diabetes_012[dt1$diabetes_012 == 2] <- 1
+glimpse(dt1)
+levels(dt1$diabetes_012)
+
+# Dữ liệu cho trường hợp 2
+dt2 <- diabetes
+```
+
+### 4.3.1 Processing Data
+```{r}
+dt1$high_bp <- factor(dt1$high_bp, levels = c(0, 1), labels = c("No High BP", "High BP"))
+dt1$high_chol <- factor(dt1$high_chol, levels = c(0, 1), labels = c("No High Chol", "High Chol"))
+dt1$chol_check <- factor(dt1$chol_check, levels = c(0, 1), labels = c("No Check", "Checked"))
+dt1$phys_activity <- factor(dt1$phys_activity, levels = c(0, 1), labels = c("No", "Yes"))
+dt1$diabetes_012 <- factor(dt1$diabetes_012, levels = c(0, 1), labels = c("No Diabetes", "Diabetes"))
+dt1$smoker <- factor(dt1$smoker, levels = c(0, 1), labels = c("No Smoke", "Smoked"))
+dt1$stroke <- factor(dt1$stroke, levels = c(0, 1), labels = c("No Stroke","Stroked"))
+dt1$heart_diseaseor_attack <- factor(dt1$heart_diseaseor_attack, levels = c(0, 1), labels = c("No CHD or No MI", "CHD or MI")) # No CHD or MI la nhung nguoi khong bi mac benh tim mạch vành (CHD) hoặc nhồi máu cơ tim (MI)
+dt1$fruits <- factor(dt1$fruits, levels = c(0,1), labels = c("No","Yes"))
+dt1$veggies <- factor(dt1$veggies, levels = c(0,1), labels = c("No","Yes"))
+dt1$hvy_alcohol_consump <- factor(dt1$hvy_alcohol_consump, levels = c(0,1), labels = c("No","Yes"))
+dt1$any_healthcare <- factor(dt1$any_healthcare, levels = c(0,1), labels = c("No","Yes"))
+dt1$no_docbc_cost <- factor(dt1$no_docbc_cost, levels = c(0,1), labels = c("No","Yes"))
+dt1$diff_walk <- factor(dt1$diff_walk, levels = c(0,1), labels = c("No","Yes"))
+dt1$age <- factor(dt1$age,
+                      levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13), 
+                      labels = c("Age 18 - 24",
+                                 "Age 25 - 29",
+                                 "Age 30 - 34",
+                                 "Age 35 - 39",
+                                 "Age 40 - 44",
+                                 "Age 45 - 49",
+                                 "Age 50 - 54",
+                                 "Age 55 - 59",
+                                 "Age 60 - 64",
+                                 "Age 65 - 69",
+                                 "Age 70 - 74",
+                                 "Age 75 - 79",
+                                 "Age 80 or older"),
+                      ordered = TRUE) 
+
+dt1$education <- factor(dt1$education,
+                      levels = c(1, 2, 3, 4, 5, 6), 
+                      labels = c("Never attended school or only kindergarten",
+                                 "Grades 1 - 8 (Elementary)",
+                                 "Grades 9 - 11 (Some high school)",
+                                 "Grade 12 or GED (High school graduate)",
+                                 "College 1 year to 3 years (Some college or technical school)",
+                                 "College 4 years or more (College graduate)"),
+                      ordered = TRUE) 
+
+dt1$income <- factor(dt1$income,
+                      levels = c(1, 2, 3, 4, 5, 6, 7, 8), 
+                      labels = c("Less than $10,000",
+                                 "$10,000 to $15,000",
+                                 "$15,000 to $20,000",
+                                 "$20,000 to $25,000",
+                                 "$25,000 to $35,000",
+                                 "$35,000 to $50,000",
+                                 "$50,000 to $75,000",
+                                 "$75,000 or more"),
+                      ordered = TRUE) 
+
+dt1$sex <- factor(dt1$sex, levels =c(0, 1), labels = c("Female","Male"))
+
+dt1$gen_hlth <- factor(dt1$gen_hlth, 
+                        levels = c(1,2,3,4,5),
+                        labels = c("Excellent",
+                                   "Very Good",
+                                   "Good",
+                                   "Fair",
+                                   "Poor"))
+```
+
+
+```{r}
+dt2$high_bp <- factor(dt2$high_bp, levels = c(0, 1), labels = c("No High BP", "High BP"))
+dt2$high_chol <- factor(dt2$high_chol, levels = c(0, 1), labels = c("No High Chol", "High Chol"))
+dt2$chol_check <- factor(dt2$chol_check, levels = c(0, 1), labels = c("No Check", "Checked"))
+dt2$phys_activity <- factor(dt2$phys_activity, levels = c(0, 1), labels = c("No", "Yes"))
+dt2$diabetes_012 <- factor(dt2$diabetes_012, levels = c(0, 1, 2), labels = c("No Diabetes", "Pre-Diabetes", "Diabetes"))
+dt2$smoker <- factor(dt2$smoker, levels = c(0, 1), labels = c("No Smoke", "Smoked"))
+dt2$stroke <- factor(dt2$stroke, levels = c(0, 1), labels = c("No Stroke","Stroked"))
+dt2$heart_diseaseor_attack <- factor(dt2$heart_diseaseor_attack, levels = c(0, 1), labels = c("No CHD or No MI", "CHD or MI")) # No CHD or MI la nhung nguoi khong bi mac benh tim mạch vành (CHD) hoặc nhồi máu cơ tim (MI)
+dt2$fruits <- factor(dt2$fruits, levels = c(0,1), labels = c("No","Yes"))
+dt2$veggies <- factor(dt2$veggies, levels = c(0,1), labels = c("No","Yes"))
+dt2$hvy_alcohol_consump <- factor(dt2$hvy_alcohol_consump, levels = c(0,1), labels = c("No","Yes"))
+dt2$any_healthcare <- factor(dt2$any_healthcare, levels = c(0,1), labels = c("No","Yes"))
+dt2$no_docbc_cost <- factor(dt2$no_docbc_cost, levels = c(0,1), labels = c("No","Yes"))
+dt2$diff_walk <- factor(dt2$diff_walk, levels = c(0,1), labels = c("No","Yes"))
+dt2$age <- factor(dt2$age,
+                      levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13), 
+                      labels = c("Age 18 - 24",
+                                 "Age 25 - 29",
+                                 "Age 30 - 34",
+                                 "Age 35 - 39",
+                                 "Age 40 - 44",
+                                 "Age 45 - 49",
+                                 "Age 50 - 54",
+                                 "Age 55 - 59",
+                                 "Age 60 - 64",
+                                 "Age 65 - 69",
+                                 "Age 70 - 74",
+                                 "Age 75 - 79",
+                                 "Age 80 or older"),
+                      ordered = TRUE) 
+
+dt2$education <- factor(dt2$education,
+                      levels = c(1, 2, 3, 4, 5, 6), 
+                      labels = c("Never attended school or only kindergarten",
+                                 "Grades 1 - 8 (Elementary)",
+                                 "Grades 9 - 11 (Some high school)",
+                                 "Grade 12 or GED (High school graduate)",
+                                 "College 1 year to 3 years (Some college or technical school)",
+                                 "College 4 years or more (College graduate)"),
+                      ordered = TRUE) 
+
+dt2$income <- factor(dt2$income,
+                      levels = c(1, 2, 3, 4, 5, 6, 7, 8), 
+                      labels = c("Less than $10,000",
+                                 "$10,000 to $15,000",
+                                 "$15,000 to $20,000",
+                                 "$20,000 to $25,000",
+                                 "$25,000 to $35,000",
+                                 "$35,000 to $50,000",
+                                 "$50,000 to $75,000",
+                                 "$75,000 or more"),
+                      ordered = TRUE) 
+
+dt2$sex <- factor(dt2$sex, levels =c(0, 1), labels = c("Female","Male"))
+
+dt2$gen_hlth <- factor(dt2$gen_hlth, 
+                        levels = c(1,2,3,4,5),
+                        labels = c("Excellent",
+                                   "Very Good",
+                                   "Good",
+                                   "Fair",
+                                   "Poor"))
+```
+
+### 4.3.2 Naive Bayes Classification
+
+#### 4.3.2.1 Trường họp 1
+##### Xây dựng mô hình
+```{r}
+table(dt1$diabetes_012)
+```
+
+```{r,warning=FALSE}
+set.seed(1)
+train_index_1 <- sample(seq_len(nrow(dt1)),size = 0.9 * nrow(dt1))
+train_set_1 <- dt1[train_index_1, ]
+test_set_1 <- dt1[-train_index_1, ]
+out_md_NB <- NaiveBayes(formula = formula_model, data = train_set_1, usekernel = TRUE)
+pred_out_md_NB <- predict(out_md_NB, newdata = test_set_1)
+head(pred_out_md_NB$posterior, 20)
+```
+
+##### Đánh giá mô hình
+```{r}
+confusion_matrix <- table(test_set_1$diabetes_012, pred_out_md_NB$class)
+print(confusion_matrix)
+```
+```{r}
+eval_multi_class <- function(x) {
+ cc <- sum(diag(x))
+ sc <- sum(x)
+ pp <- colSums(x)
+ tt <- rowSums(x)
+
+ prec <- diag(x)/colSums(x)
+ recall <- diag(x)/rowSums(x)
+ macro_prec <- mean(prec)
+ macro_recall <- mean(recall)
+ macro_f1 <- 2 * macro_prec * macro_recall/(1/macro_prec + 1/macro_recall)
+ acc <- cc/sc
+ kap <- (cc * sc - sum(pp * tt))/(sc^2 - sum(pp * tt))
+ return(list(Precision = prec, Recall = recall, Accuracy = acc, Kappa = kap,
+             Macro_F1 = macro_f1))
+}
+eval_multi_class(confusion_matrix)
+```
+
+#### 4.3.2.2 Trường họp 2
+##### Xây dựng mô hình
+
+```{r}
+table(dt2$diabetes_012)
+```
+
+```{r}
+set.seed(1)
+smotenc_themis_diabetes <- smotenc(df = dt2, var = "diabetes_012", k = 5, over_ratio = 1)
+with(smotenc_themis_diabetes, table(diabetes_012))
+```
+
+```{r,warning=FALSE}
+set.seed(1)
+train_index <- sample(seq_len(nrow(smotenc_themis_diabetes)),size = 0.9 * nrow(smotenc_themis_diabetes))
+train_set <- smotenc_themis_diabetes[train_index, ]
+test_set <- smotenc_themis_diabetes[-train_index, ]
+out_md_NB_2 <- NaiveBayes(formula = formula_model, data = train_set, usekernel = TRUE)
+pred_out_md_NB_2 <- predict(out_md_NB_2, newdata = test_set)
+head(pred_out_md_NB_2$posterior, 20)
+```
+
+##### Đánh giá mô hình
+```{r}
+confusion_matrix_2 <- table(test_set$diabetes_012, pred_out_md_NB_2$class)
+print(confusion_matrix_2)
+```
+
+```{r}
+eval_multi_class(confusion_matrix_2)
+```
+
+## 4.4 LDA & QDA Method
+
+### 4.4.1 Factor Catergory Variables
+
+```{r}
+summary(diabetes)
+```
+
+```{r}
+diabetes1 <- diabetes
+diabetes1 <- diabetes1 |> mutate(diabetes_012 = factor(diabetes_012),
+                               high_bp = factor(high_bp),
+                               high_chol = factor(high_chol),
+                               chol_check = factor(chol_check),
+                               smoker = factor(smoker),
+                               stroke = factor(stroke),
+                               heart_diseaseor_attack = factor(heart_diseaseor_attack),
+                               phys_activity = factor(phys_activity),
+                               fruits = factor(fruits),
+                               veggies = factor(veggies),
+                               hvy_alcohol_consump = factor(hvy_alcohol_consump),
+                               any_healthcare = factor(any_healthcare),
+                               no_docbc_cost = factor(no_docbc_cost),
+                               diff_walk = factor(diff_walk),
+                               sex = factor(sex),
+                               age = factor(age),
+                               education = factor(education),
+                               income = factor(income))
+glimpse(diabetes1)
+```
+
+### 4.4.2 Kiểm tra tính độc lập
+
+#### Giữa các biến định tính
+
+```{r}
+library(dplyr)
+library(purrr)
+
+# Lọc các biến phân loại
+categorical_vars <- diabetes1 %>% select_if(is.factor)
+
+# Tạo ma trận kiểm định Chi-squared
+chi_square_results <- combn(names(categorical_vars), 2, function(x) {
+  test <- chisq.test(table(categorical_vars[[x[1]]], categorical_vars[[x[2]]]))
+  data.frame(var1 = x[1], var2 = x[2], p_value = test$p.value)
+}, simplify = FALSE)
+
+chi_square_results <- bind_rows(chi_square_results)
+chi_square_results |> filter(p_value > 0.05 | p_value == 0.05)
+```
+
+#### Giữa các biến định lượng
+
+```{r}
+# Chọn các biến liên tục
+
+corrplot(cor(diabetes1[sapply(diabetes1, is.numeric)]), method="circle")
+```
+
+
+### 4.4.3 LDA
+
+#### LDA trên tất cả các biến
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(diabetes1),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- diabetes1[ind==1,]
+testing <- diabetes1[ind==2,]
+```
+
+#### Model
+
+```{r}
+lda_diabetes_md1 <- lda(diabetes_012 ~ ., data = training)
+lda_diabetes_md1
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 82.7\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 2.05\% quan sát được phân loại vào nhóm 1, tức tiền tiểu đường;
+
+• Có khoảng 15.26\% quan sát được phân loại vào nhóm 2, tức là có mắc bệnh tiểu đường;
+
+Ngoài ra, ta biết được rằng 99.11\% khả năng phân loại có được từ discriminant function thứ nhất (LD1) và 0.89\% từ discriminant function thứ hai (LD2).
+
+```{r}
+attributes(lda_diabetes_md1)
+```
+
+```{r}
+lda_diabetes_md1$count
+lda_diabetes_md1$scaling
+```
+
+Từ hệ số của các biến giải thích trong mô hình, ta nhận thấy rằng các biến ``high_bp1``, ``high_chol1``, ``chol_check1``, ``stroke1``, ``heart_diseaseor_attack1``, ``hvy_alcohol_consump1``, ``gen_hlth``, ``diff_walk1``, ``sex1`` có ảnh hưởng đáng kể lên thuật toán LDA.
+
+#### Hist
+
+```{r}
+p <- predict(lda_diabetes_md1, training)
+ldahist(data = p$x[,1], g = training$diabetes_012)
+```
+
+**Nhận xét:** ta nhận thấy rằng có sự trùng lặp giữa các đồ thị histogram giá trị LDA của 3 nhóm, do đó mô hình không có sự phân loại tốt giữa 3 nhóm.
+
+```{r}
+ldahist(data = p$x[,2], g = training$diabetes_012)
+```
+
+#### Bi-plot
+
+```{r}
+ggord(lda_diabetes_md1, training$diabetes_012)
+```
+
+#### Partition plot
+
+```{r, error=TRUE}
+# dev.new(width = 10, height = 10)  # Tăng kích thước cửa sổ
+# partimat(diabetes_012~., data = training, method = "lda")
+```
+
+Kích thước quá lớn nên không thể vẽ được.
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(lda_diabetes_md1, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+```
+
+**Nhận xét:** Mô hình không dự đoán được nhóm 1, tức nhóm người tiền tiểu đường.
+
+
+```{r}
+# Bước 1: Tính toán giá trị discriminant
+lda_pred <- predict(lda_diabetes_md1, testing)
+
+# Bước 2: Trích xuất các giá trị discriminant (Linear Discriminants)
+lda_values <- lda_pred$x  # Ma trận các giá trị discriminant
+
+plot_data <- data.frame(
+  LD1 = lda_values[, 1],  # Trục Linear Discriminant 1
+  LD2 = lda_values[, 2],  # Trục Linear Discriminant 2 (nếu có)
+  Actual = factor(testing$diabetes_012),   # Nhãn thực tế
+  Predicted = factor(lda_pred$class)      # Nhãn dự đoán
+)
+
+library(ggplot2)
+
+ggplot(plot_data, aes(x = LD1, y = LD2, color = Actual)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "Phân loại LDA - Nhãn thực tế",
+       x = "Linear Discriminant 1 (LD1)",
+       y = "Linear Discriminant 2 (LD2)",
+       color = "Nhãn thực tế") +
+  theme_minimal()
+
+ggplot(plot_data, aes(x = LD1, y = LD2, color = Predicted)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "Phân loại LDA - Nhãn dự đoán",
+       x = "Linear Discriminant 1 (LD1)",
+       y = "Linear Discriminant 2 (LD2)",
+       color = "Nhãn dự đoán") +
+  theme_minimal()
+
+```
+
+#### LDA trên một số biến có chọn lọc
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(diabetes1),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- diabetes1[ind==1,]
+testing <- diabetes1[ind==2,]
+```
+
+#### Model
+
+```{r}
+lda_diabetes_md2 <- lda(formula = formula_model, data = training)
+lda_diabetes_md2
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 82.7\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 2.05\% quan sát được phân loại vào nhóm 1, tức tiền tiểu đường;
+
+• Có khoảng 15.26\% quan sát được phân loại vào nhóm 2, tức là có mắc bệnh tiểu đường;
+
+Ngoài ra, ta biết được rằng 99.3\% khả năng phân loại có được từ discriminant function thứ nhất (LD1) và 0.7\% từ discriminant function thứ hai (LD2).
+
+
+```{r}
+lda_diabetes_md2$count
+lda_diabetes_md2$scaling
+```
+
+#### Hist
+
+```{r}
+p <- predict(lda_diabetes_md2, training)
+ldahist(data = p$x[,1], g = training$diabetes_012)
+```
+
+**Nhận xét:** ta nhận thấy rằng có sự trùng lặp giữa các đồ thị histogram giá trị LDA của 3 nhóm, do đó mô hình không có sự phân loại tốt giữa 3 nhóm.
+
+```{r}
+ldahist(data = p$x[,2], g = training$diabetes_012)
+```
+
+#### Bi-plot
+
+```{r}
+ggord(lda_diabetes_md2, training$diabetes_012)
+```
+
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(lda_diabetes_md2, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+```
+
+**Nhận xét:** Mô hình không dự đoán được nhóm 1, tức nhóm người tiền tiểu đường.
+
+
+```{r}
+# Bước 1: Tính toán giá trị discriminant
+lda_pred <- predict(lda_diabetes_md2, testing)
+
+# Bước 2: Trích xuất các giá trị discriminant (Linear Discriminants)
+lda_values <- lda_pred$x  # Ma trận các giá trị discriminant
+
+plot_data <- data.frame(
+  LD1 = lda_values[, 1],  # Trục Linear Discriminant 1
+  LD2 = lda_values[, 2],  # Trục Linear Discriminant 2 (nếu có)
+  Actual = factor(testing$diabetes_012),   # Nhãn thực tế
+  Predicted = factor(lda_pred$class)      # Nhãn dự đoán
+)
+
+library(ggplot2)
+
+ggplot(plot_data, aes(x = LD1, y = LD2, color = Actual)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "Phân loại LDA - Nhãn thực tế",
+       x = "Linear Discriminant 1 (LD1)",
+       y = "Linear Discriminant 2 (LD2)",
+       color = "Nhãn thực tế") +
+  theme_minimal()
+
+ggplot(plot_data, aes(x = LD1, y = LD2, color = Predicted)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "Phân loại LDA - Nhãn dự đoán",
+       x = "Linear Discriminant 1 (LD1)",
+       y = "Linear Discriminant 2 (LD2)",
+       color = "Nhãn dự đoán") +
+  theme_minimal()
+
+```
+
+### 4.4.4 Thay đổi nhãn dán biến mục tiêu ban đầu 
+
+Ta gộp những người được gán nhãn là tiền tiểu đường vào chung với nhóm người bị bệnh tiểu đường và gọi chung là nhóm người đã mắc bệnh tiểu đường.
+
+```{r}
+diabetes2 <- diabetes1
+diabetes2$diabetes_012 <- diabetes$diabetes_012
+diabetes2 <- diabetes2 |> mutate(diabetes_012 = ifelse(diabetes_012 == 2, 1, diabetes_012))
+diabetes2 <- diabetes2 |> mutate(diabetes_012 = factor(diabetes_012))
+glimpse(diabetes2)
+```
+
+##### LDA trên một số biến có chọn lọc với biến mục tiêu thay đổi (2 nhóm)
+
+##### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(diabetes2),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- diabetes2[ind==1,]
+testing <- diabetes2[ind==2,]
+```
+
+##### Model
+
+```{r}
+lda_diabetes_md3 <- lda(formula = formula_model, data = training)
+lda_diabetes_md3
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 82.7\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 17.31\% quan sát được phân loại vào nhóm 1, tức mắc bệnh tiểu đường;
+
+
+```{r}
+lda_diabetes_md3$count
+lda_diabetes_md3$scaling
+```
+
+##### Hist
+
+```{r}
+p <- predict(lda_diabetes_md3, training)
+ldahist(data = p$x[,1], g = training$diabetes_012)
+```
+
+**Nhận xét:** ta nhận thấy rằng có sự trùng lặp giữa các đồ thị histogram giá trị LDA của 3 nhóm, do đó mô hình không có sự phân loại tốt giữa 3 nhóm.
+
+
+##### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(lda_diabetes_md3, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+```
+
+```{r}
+# Trực quan hóa confusion matrix
+cm_table <- as.table(conf_matrix)
+cm_melt <- as.data.frame(as.table(cm_table))
+
+ggplot(data = cm_melt, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%d", Freq)), vjust = 1) +
+  scale_fill_gradient(low = "lightskyblue1", high = "#1f78b4") +
+  theme_minimal() +
+  labs(x = "Predicted", y = "Actual", fill = "Count")
+```
+
+**Nhận xét:** Mô hình không dự đoán được nhóm 1, tức nhóm người tiền tiểu đường.
+
+
+```{r}
+# Bước 1: Tính toán giá trị discriminant
+lda_pred <- predict(lda_diabetes_md3, testing)
+
+# Bước 2: Trích xuất các giá trị discriminant (Linear Discriminants)
+lda_values <- lda_pred$x  # Ma trận các giá trị discriminant
+
+plot_data <- data.frame(
+  LD1 = lda_values[, 1],  # Trục Linear Discriminant 1
+  Actual = factor(testing$diabetes_012),   # Nhãn thực tế
+  Predicted = factor(lda_pred$class)      # Nhãn dự đoán
+)
+
+# Thêm cột "Index" để làm trục y (số thứ tự các điểm)
+plot_data <- plot_data %>%
+  mutate(Index = 1:nrow(plot_data))  # Số thứ tự các điểm
+
+# Vẽ phân loại dựa trên LD1 và nhãn thực tế
+ggplot(plot_data, aes(x = LD1, y = Index, color = Actual)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(
+    title = "Phân loại LDA - Nhãn thực tế",
+    x = "Linear Discriminant 1 (LD1)",
+    y = "Số thứ tự",
+    color = "Nhãn thực tế"
+  ) +
+  theme_minimal()
+
+# Vẽ phân loại dựa trên LD1 và nhãn dự đoán
+ggplot(plot_data, aes(x = LD1, y = Index, color = Predicted)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(
+    title = "Phân loại LDA - Nhãn dự đoán",
+    x = "Linear Discriminant 1 (LD1)",
+    y = "Số thứ tự",
+    color = "Nhãn dự đoán"
+  ) +
+  theme_minimal()
+```
+
+### 4.4.5 LDA: Imbalanced Data
+
+#### Imbalanced data cho 3 nhóm
+
+Ta xem số quan sát ở mỗi nhóm trong biến ``diabetes_012``
+
+```{r}
+table(diabetes1$diabetes_012)
+```
+
+**Nhận xét:** ta thấy có sự chênh lệch đáng kể. Do đó ta sẽ sử dụng phương pháp SMOTE để tạo lặp mẫu sao cho hai nhóm cân bằng nhau.
+
+```{r, message=FALSE}
+library(themis)
+
+set.seed(123)
+smotenc_diabetes1 <- smotenc(df = diabetes1, var = "diabetes_012",
+                          k = 5, over_ratio = 1)
+glimpse(smotenc_diabetes1)
+```
+
+```{r}
+with(smotenc_diabetes1, table(diabetes_012))
+```
+
+**Nhận xét:** dữ liệu hai nhóm đã cân bằng.
+
+```{r}
+summary(smotenc_diabetes1)
+```
+
+#### Imbalanced data cho 2 nhóm
+
+Ta xem số quan sát ở mỗi nhóm trong biến ``diabetes_012``
+
+```{r}
+table(diabetes2$diabetes_012)
+```
+
+**Nhận xét:** ta thấy có sự chênh lệch đáng kể. Do đó ta sẽ sử dụng phương pháp SMOTE để tạo lặp mẫu sao cho hai nhóm cân bằng nhau.
+
+```{r, message=FALSE}
+library(themis)
+
+set.seed(123)
+smotenc_diabetes2 <- smotenc(df = diabetes2, var = "diabetes_012",
+                          k = 5, over_ratio = 1)
+glimpse(smotenc_diabetes2)
+```
+
+```{r}
+with(smotenc_diabetes2, table(diabetes_012))
+```
+
+**Nhận xét:** dữ liệu hai nhóm đã cân bằng.
+
+```{r}
+summary(smotenc_diabetes2)
+```
+
+
+#### LDA trên balance data 3 nhóm
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(smotenc_diabetes1),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- smotenc_diabetes1[ind==1,]
+testing <- smotenc_diabetes1[ind==2,]
+```
+
+#### Model
+
+```{r}
+lda_diabetes_md4 <- lda(formula = formula_model, data = training)
+lda_diabetes_md4
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 33.3\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 33.3\% quan sát được phân loại vào nhóm 1, tức tiền tiểu đường;
+
+• Có khoảng 33.4\% quan sát được phân loại vào nhóm 2, tức là có mắc bệnh tiểu đường;
+
+Ngoài ra, ta biết được rằng 91.34\% khả năng phân loại có được từ discriminant function thứ nhất (LD1) và 8.66\% từ discriminant function thứ hai (LD2).
+
+
+```{r}
+lda_diabetes_md4$count
+lda_diabetes_md4$scaling
+```
+
+#### Hist
+
+```{r}
+p <- predict(lda_diabetes_md4, training)
+ldahist(data = p$x[,1], g = training$diabetes_012)
+```
+
+**Nhận xét:** ta nhận thấy rằng có sự trùng lặp giữa các đồ thị histogram giá trị LDA của 3 nhóm, do đó mô hình không có sự phân loại tốt giữa 3 nhóm.
+
+```{r}
+ldahist(data = p$x[,2], g = training$diabetes_012)
+```
+
+#### Bi-plot
+
+```{r}
+ggord(lda_diabetes_md4, training$diabetes_012)
+```
+
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(lda_diabetes_md4, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+```
+
+
+```{r}
+# Bước 1: Tính toán giá trị discriminant
+lda_pred <- predict(lda_diabetes_md4, testing)
+
+# Bước 2: Trích xuất các giá trị discriminant (Linear Discriminants)
+lda_values <- lda_pred$x  # Ma trận các giá trị discriminant
+
+plot_data <- data.frame(
+  LD1 = lda_values[, 1],  # Trục Linear Discriminant 1
+  LD2 = lda_values[, 2],  # Trục Linear Discriminant 2 (nếu có)
+  Actual = factor(testing$diabetes_012),   # Nhãn thực tế
+  Predicted = factor(lda_pred$class)      # Nhãn dự đoán
+)
+
+library(ggplot2)
+
+ggplot(plot_data, aes(x = LD1, y = LD2, color = Actual)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "Phân loại LDA - Nhãn thực tế",
+       x = "Linear Discriminant 1 (LD1)",
+       y = "Linear Discriminant 2 (LD2)",
+       color = "Nhãn thực tế") +
+  theme_minimal()
+
+ggplot(plot_data, aes(x = LD1, y = LD2, color = Predicted)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "Phân loại LDA - Nhãn dự đoán",
+       x = "Linear Discriminant 1 (LD1)",
+       y = "Linear Discriminant 2 (LD2)",
+       color = "Nhãn dự đoán") +
+  theme_minimal()
+
+```
+
+
+#### LDA trên balanced data 2 nhóm
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(smotenc_diabetes2),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- smotenc_diabetes2[ind==1,]
+testing <- smotenc_diabetes2[ind==2,]
+```
+
+#### Model
+
+```{r}
+lda_diabetes_md5 <- lda(formula = formula_model, data = training)
+lda_diabetes_md5
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 50\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 50\% quan sát được phân loại vào nhóm 1, tức mắc bệnh tiểu đường;
+
+
+```{r}
+lda_diabetes_md5$count
+lda_diabetes_md5$scaling
+```
+
+#### Hist
+
+```{r}
+p <- predict(lda_diabetes_md5, training)
+ldahist(data = p$x[,1], g = training$diabetes_012)
+```
+
+**Nhận xét:** ta nhận thấy rằng có sự trùng lặp giữa các đồ thị histogram giá trị LDA của 3 nhóm, do đó mô hình không có sự phân loại tốt giữa 3 nhóm.
+
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(lda_diabetes_md5, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+
+# Trực quan hóa confusion matrix
+cm_table <- as.table(conf_matrix)
+cm_melt <- as.data.frame(as.table(cm_table))
+
+ggplot(data = cm_melt, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%d", Freq)), vjust = 1) +
+  scale_fill_gradient(low = "lightskyblue1", high = "#1f78b4") +
+  theme_minimal() +
+  labs(x = "Predicted", y = "Actual", fill = "Count")
+```
+
+**Nhận xét:** Mô hình không dự đoán được nhóm 1, tức nhóm người tiền tiểu đường.
+
+
+```{r}
+# Bước 1: Tính toán giá trị discriminant
+lda_pred <- predict(lda_diabetes_md5, testing)
+
+# Bước 2: Trích xuất các giá trị discriminant (Linear Discriminants)
+lda_values <- lda_pred$x  # Ma trận các giá trị discriminant
+
+plot_data <- data.frame(
+  LD1 = lda_values[, 1],  # Trục Linear Discriminant 1
+  Actual = factor(testing$diabetes_012),   # Nhãn thực tế
+  Predicted = factor(lda_pred$class)      # Nhãn dự đoán
+)
+
+# Thêm cột "Index" để làm trục y (số thứ tự các điểm)
+plot_data <- plot_data %>%
+  mutate(Index = 1:nrow(plot_data))  # Số thứ tự các điểm
+
+# Vẽ phân loại dựa trên LD1 và nhãn thực tế
+ggplot(plot_data, aes(x = LD1, y = Index, color = Actual)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(
+    title = "Phân loại LDA - Nhãn thực tế",
+    x = "Linear Discriminant 1 (LD1)",
+    y = "Số thứ tự",
+    color = "Nhãn thực tế"
+  ) +
+  theme_minimal()
+
+# Vẽ phân loại dựa trên LD1 và nhãn dự đoán
+ggplot(plot_data, aes(x = LD1, y = Index, color = Predicted)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(
+    title = "Phân loại LDA - Nhãn dự đoán",
+    x = "Linear Discriminant 1 (LD1)",
+    y = "Số thứ tự",
+    color = "Nhãn dự đoán"
+  ) +
+  theme_minimal()
+```
+
+### 4.4.4 QDA
+
+#### QDA trên tất cả các biến
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(diabetes1),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- diabetes1[ind==1,]
+testing <- diabetes1[ind==2,]
+```
+
+#### Model
+
+```{r}
+qda_diabetes_md1 <- qda(diabetes_012 ~ ., data = training)
+qda_diabetes_md1
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 82.7\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 2.05\% quan sát được phân loại vào nhóm 1, tức tiền tiểu đường;
+
+• Có khoảng 15.26\% quan sát được phân loại vào nhóm 2, tức là có mắc bệnh tiểu đường;
+
+```{r}
+attributes(qda_diabetes_md1)
+```
+
+```{r}
+qda_diabetes_md1$count
+```
+`
+#### Evaluation
+
+```{r}
+pred_out_md_QDA <- predict(qda_diabetes_md1, newdata = testing)
+posterior_probs <- pred_out_md_QDA$posterior
+## Gán nhãn tập testing
+testing$predicted_QDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_QDA)
+```
+
+#### QDA trên một số biến có chọn lọc
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(diabetes1),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- diabetes1[ind==1,]
+testing <- diabetes1[ind==2,]
+```
+
+#### Model
+
+```{r}
+qda_diabetes_md2 <- qda(formula = formula_model, data = training)
+qda_diabetes_md2
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 82.7\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 2.05\% quan sát được phân loại vào nhóm 1, tức tiền tiểu đường;
+
+• Có khoảng 15.26\% quan sát được phân loại vào nhóm 2, tức là có mắc bệnh tiểu đường;
+
+Ngoài ra, ta biết được rằng 99.3\% khả năng phân loại có được từ discriminant function thứ nhất (LD1) và 0.7\% từ discriminant function thứ hai (LD2).
+
+
+```{r}
+qda_diabetes_md2$count
+```
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(qda_diabetes_md2, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+```
+
+
+#### QDA trên một số biến có chọn lọc với biến mục tiêu thay đổi (2 nhóm)
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(diabetes2),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- diabetes2[ind==1,]
+testing <- diabetes2[ind==2,]
+```
+
+#### Model
+
+```{r}
+qda_diabetes_md3 <- qda(formula = formula_model, data = training)
+qda_diabetes_md3
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 82.7\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 17.31\% quan sát được phân loại vào nhóm 1, tức mắc bệnh tiểu đường;
+
+
+```{r}
+qda_diabetes_md3$count
+```
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(qda_diabetes_md3, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+
+# Trực quan hóa confusion matrix
+cm_table <- as.table(conf_matrix)
+cm_melt <- as.data.frame(as.table(cm_table))
+
+ggplot(data = cm_melt, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%d", Freq)), vjust = 1) +
+  scale_fill_gradient(low = "lightskyblue1", high = "#1f78b4") +
+  theme_minimal() +
+  labs(x = "Predicted", y = "Actual", fill = "Count")
+```
+
+### 4.4.6 QDA: Imbalanced Data
+#### QDA trên balance data 3 nhóm
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(smotenc_diabetes1),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- smotenc_diabetes1[ind==1,]
+testing <- smotenc_diabetes1[ind==2,]
+```
+
+#### Model
+
+```{r}
+qda_diabetes_md4 <- qda(formula = formula_model, data = training)
+qda_diabetes_md4
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 33.3\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 33.3\% quan sát được phân loại vào nhóm 1, tức tiền tiểu đường;
+
+• Có khoảng 33.4\% quan sát được phân loại vào nhóm 2, tức là có mắc bệnh tiểu đường;
+
+Ngoài ra, ta biết được rằng 91.34\% khả năng phân loại có được từ discriminant function thứ nhất (LD1) và 8.66\% từ discriminant function thứ hai (LD2).
+
+
+```{r}
+qda_diabetes_md4$count
+```
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(qda_diabetes_md4, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+```
+
+#### QDA trên balanced data 2 nhóm
+
+#### Validation
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(smotenc_diabetes2),
+              replace = TRUE,
+              prob = c(0.7, 0.3))
+training <- smotenc_diabetes2[ind==1,]
+testing <- smotenc_diabetes2[ind==2,]
+```
+
+#### Model
+
+```{r}
+qda_diabetes_md5 <- qda(formula = formula_model, data = training)
+qda_diabetes_md5
+```
+
+**Nhận xét:** từ mô hình LDA, ta thấy trong tập training:
+
+• Có khoảng 50\% quan sát được phân loại vào nhóm 0, tức là không có mắc bệnh tiểu đường;
+
+• Có khoảng 50\% quan sát được phân loại vào nhóm 1, tức mắc bệnh tiểu đường;
+
+
+```{r}
+lda_diabetes_md5$count
+```
+
+#### Evaluation
+
+```{r}
+pred_out_md_LDA <- predict(qda_diabetes_md5, newdata = testing)
+posterior_probs <- pred_out_md_LDA$posterior
+## Gán nhãn tập testing
+testing$predicted_LDA <- colnames(posterior_probs)[max.col(posterior_probs)]
+```
+
+```{r}
+conf_matrix <- table(Actual = testing$diabetes_012, Predicted = testing$predicted_LDA)
+
+# Trực quan hóa confusion matrix
+cm_table <- as.table(conf_matrix)
+cm_melt <- as.data.frame(as.table(cm_table))
+
+ggplot(data = cm_melt, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%d", Freq)), vjust = 1) +
+  scale_fill_gradient(low = "lightskyblue1", high = "#1f78b4") +
+  theme_minimal() +
+  labs(x = "Predicted", y = "Actual", fill = "Count")
+```
+
+
+
